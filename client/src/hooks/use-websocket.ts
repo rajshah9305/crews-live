@@ -25,6 +25,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       return;
     }
 
+    // Clear any existing reconnect timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
     setConnectionStatus('connecting');
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -44,7 +49,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     ws.current.onmessage = (event) => {
       try {
         const data: WebSocketEvent = JSON.parse(event.data);
-        console.log('WebSocket message:', data);
         setLastEvent(data);
         
         if (data.type === 'connection_established') {
@@ -57,20 +61,27 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       }
     };
 
-    ws.current.onclose = () => {
-      console.log('WebSocket disconnected');
-      setConnectionStatus('disconnected');
-      onDisconnect?.();
-      
-      // Attempt to reconnect
-      if (reconnectAttempts.current < maxReconnectAttempts) {
-        reconnectAttempts.current++;
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-        console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts.current})`);
+    ws.current.onclose = (event) => {
+      // Only attempt reconnect if it wasn't a clean close
+      if (event.code !== 1000) {
+        console.log('WebSocket disconnected unexpectedly');
+        setConnectionStatus('disconnected');
+        onDisconnect?.();
         
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, delay);
+        // Attempt to reconnect only if not manually closed
+        if (reconnectAttempts.current < maxReconnectAttempts) {
+          reconnectAttempts.current++;
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+          console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts.current})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, delay);
+        }
+      } else {
+        console.log('WebSocket disconnected cleanly');
+        setConnectionStatus('disconnected');
+        onDisconnect?.();
       }
     };
 
@@ -80,7 +91,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
       onError?.(error);
     };
 
-  }, [onConnect, onDisconnect, onError, onMessage]);
+  }, []);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -114,7 +125,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect]);
+  }, []); // Remove dependencies to prevent constant reconnections
 
   // Send ping every 30 seconds to keep connection alive
   useEffect(() => {

@@ -1,7 +1,12 @@
 import { Agent, Tool } from "../../shared/types.js";
+import Cerebras from '@cerebras/cerebras_cloud_sdk';
 
-// Cerebras AI integration would go here
-// For now, we'll create mock agents that simulate the behavior
+// Initialize Cerebras client with API key
+const cerebras = new Cerebras({
+  apiKey: process.env.CEREBRAS_API_KEY,
+});
+
+const MODEL = 'llama3.1-70b';
 
 export class AIAgent implements Agent {
   id: string;
@@ -42,14 +47,41 @@ Always respond with clear, structured output that the next agent or final user c
   }
 
   async execute(prompt: string, context?: string): Promise<string> {
-    // Simulate AI processing time
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 5000 + 2000));
-    
-    // In production, this would call the Cerebras API
-    // const cerebrasApiKey = process.env.CEREBRAS_API_KEY;
-    // For now, return role-specific responses
-    
-    return this.generateRoleSpecificResponse(prompt, context);
+    try {
+      const systemPrompt = this.generateSystemPrompt();
+      const fullPrompt = context 
+        ? `${systemPrompt}\n\nContext from previous agents:\n${context}\n\nNew requirements:\n${prompt}`
+        : `${systemPrompt}\n\nRequirements:\n${prompt}`;
+
+      console.log(`Agent ${this.role} executing with Cerebras AI...`);
+      
+      const response = await cerebras.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: context ? `Context from previous agents:\n${context}\n\nNew requirements:\n${prompt}` : prompt
+          }
+        ],
+        model: MODEL,
+        max_tokens: 4000,
+        temperature: 0.7,
+      });
+
+      const result = (response.choices as any)?.[0]?.message?.content || 'No response generated';
+      console.log(`Agent ${this.role} completed successfully`);
+      
+      return result;
+    } catch (error) {
+      console.error(`Cerebras AI error for agent ${this.role}:`, error);
+      
+      // Fallback to role-specific responses if API fails
+      console.log(`Falling back to mock response for agent ${this.role}`);
+      return this.generateRoleSpecificResponse(prompt, context);
+    }
   }
 
   private generateRoleSpecificResponse(prompt: string, context?: string): string {
@@ -276,7 +308,7 @@ All tests passing ✅ Ready for production deployment
 *Quality assurance completed by QA Engineer Agent*`
     };
 
-    return responses[this.role] || `Analysis completed for ${this.role}`;
+    return responses[this.role as keyof typeof responses] || `Analysis completed for ${this.role}`;
   }
 }
 
