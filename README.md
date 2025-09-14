@@ -54,7 +54,7 @@ CrewCodeGen is a full-stack web application that provides AI-powered code genera
 
 3.  Create a `.env` file in the root of the project and add your Cerebras API key:
     ```
-    CEREBRAS_API_KEY=your_api_key_here
+    CEREBRAS_API_KEY="your_actual_api_key_here"
     ```
 
 ### Running the Application
