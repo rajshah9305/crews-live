@@ -47,14 +47,19 @@ Always respond with clear, structured output that the next agent or final user c
   }
 
   async execute(prompt: string, context?: string): Promise<string> {
+    if (!process.env.CEREBRAS_API_KEY) {
+      console.warn(`CEREBRAS_API_KEY not set. Falling back to mock response for agent ${this.role}`);
+      return this.generateRoleSpecificResponse(prompt, context);
+    }
+
     try {
       const systemPrompt = this.generateSystemPrompt();
-      const fullPrompt = context 
+      const fullPrompt = context
         ? `${systemPrompt}\n\nContext from previous agents:\n${context}\n\nNew requirements:\n${prompt}`
         : `${systemPrompt}\n\nRequirements:\n${prompt}`;
 
       console.log(`Agent ${this.role} executing with Cerebras AI...`);
-      
+
       const response = await cerebras.chat.completions.create({
         messages: [
           {
@@ -73,14 +78,11 @@ Always respond with clear, structured output that the next agent or final user c
 
       const result = (response.choices as any)?.[0]?.message?.content || 'No response generated';
       console.log(`Agent ${this.role} completed successfully`);
-      
+
       return result;
     } catch (error) {
       console.error(`Cerebras AI error for agent ${this.role}:`, error);
-      
-      // Fallback to role-specific responses if API fails
-      console.log(`Falling back to mock response for agent ${this.role}`);
-      return this.generateRoleSpecificResponse(prompt, context);
+      throw new Error(`Cerebras AI error for agent ${this.role}`);
     }
   }
 
