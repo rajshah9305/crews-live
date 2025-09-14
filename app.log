@@ -1,0 +1,6 @@
+
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[dotenv@17.2.2] injecting env (1) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+WebSocket server initialized on path: /ws

@@ -190,89 +190,47 @@ export class CrewService {
   }
 
   private generateCodeFiles(jobStatus: JobStatus): CodeFile[] {
-    // In a real implementation, this would parse the Senior Developer output
-    // and extract actual code files. For now, we'll return structured examples.
-    
-    const files: CodeFile[] = [
-      {
-        path: 'src/App.tsx',
-        language: 'typescript',
-        content: `import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import Header from './components/Header';
-import HomePage from './pages/HomePage';
-import './App.css';
+    const seniorDeveloperTask = jobStatus.tasks.find(
+      (task) => task.agent.role === 'Senior Developer'
+    );
 
-const queryClient = new QueryClient();
+    if (!seniorDeveloperTask || !seniorDeveloperTask.output) {
+      return [];
+    }
 
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <Router>
-        <div className="App">
-          <Header />
-          <main>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-            </Routes>
-          </main>
-        </div>
-      </Router>
-    </QueryClientProvider>
-  );
-}
+    const files: CodeFile[] = [];
+    const codeBlockRegex = /```(\w+)\s*([\s\S]*?)```/g;
+    const lines = seniorDeveloperTask.output.split('\n');
+    let match;
+    let fileIndex = 0;
 
-export default App;`
-      },
-      {
-        path: 'src/components/Header.tsx',
-        language: 'typescript',
-        content: `import React from 'react';
-import { Link } from 'react-router-dom';
+    while ((match = codeBlockRegex.exec(seniorDeveloperTask.output)) !== null) {
+      const language = match[1];
+      const content = match[2].trim();
 
-const Header: React.FC = () => {
-  return (
-    <header className="bg-blue-600 text-white p-4">
-      <div className="container mx-auto flex justify-between items-center">
-        <Link to="/" className="text-xl font-bold">
-          My App
-        </Link>
-        <nav>
-          <Link to="/" className="mx-2 hover:underline">
-            Home
-          </Link>
-        </nav>
-      </div>
-    </header>
-  );
-};
+      // Try to find a file path in the lines preceding the code block
+      const codeBlockStartIndex = seniorDeveloperTask.output.indexOf(match[0]);
+      const precedingText = seniorDeveloperTask.output.substring(0, codeBlockStartIndex);
+      const precedingLines = precedingText.split('\n').slice(-5); // Look in the last 5 lines
 
-export default Header;`
-      },
-      {
-        path: 'package.json',
-        language: 'json',
-        content: `{
-  "name": "generated-app",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.8.0",
-    "@tanstack/react-query": "^4.24.0",
-    "typescript": "^4.9.5"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  }
-}`
+      const pathLine = precedingLines.reverse().find(line =>
+        line.includes('/') || line.includes('.')
+      );
+
+      let path = `generated_file_${fileIndex++}.${language}`;
+      if (pathLine) {
+        const extractedPath = pathLine.match(/([a-zA-Z0-9_./-]+)/);
+        if (extractedPath) {
+          path = extractedPath[0];
+        }
       }
-    ];
+
+      files.push({
+        path,
+        language,
+        content,
+      });
+    }
 
     return files;
   }
@@ -287,16 +245,32 @@ export default Header;`
 
   getSystemMetrics() {
     const activeJobs = this.activeJobs.size;
-    const completedJobs = Array.from(this.activeJobs.values()).filter(job => job.status === 'completed').length;
-    const totalJobs = 1247; // This would come from a database in production
+    const allJobs = Array.from(this.activeJobs.values());
+    const completedJobs = allJobs.filter(job => job.status === 'completed');
+    const totalCompleted = completedJobs.length;
+
+    const successRate = totalCompleted > 0
+      ? (completedJobs.filter(job => job.status === 'completed').length / totalCompleted) * 100
+      : 100;
+
+    const averageResponseTime = totalCompleted > 0
+      ? completedJobs.reduce((acc, job) => {
+          if (job.startTime && job.endTime) {
+            return acc + (job.endTime.getTime() - job.startTime.getTime());
+          }
+          return acc;
+        }, 0) / totalCompleted
+      : 0;
+
+    const memoryUsage = process.memoryUsage();
     
     return {
       activeJobs,
-      totalGenerations: totalJobs,
-      successRate: 98.3,
-      averageResponseTime: '47ms',
-      cpuUsage: 67,
-      memoryUsage: 45,
+      totalGenerations: allJobs.length,
+      successRate: parseFloat(successRate.toFixed(1)),
+      averageResponseTime: `${Math.round(averageResponseTime)}ms`,
+      cpuUsage: 0, // Placeholder, as cpuUsage is more complex to calculate
+      memoryUsage: Math.round(memoryUsage.rss / 1024 / 1024), // in MB
     };
   }
 }
