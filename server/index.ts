@@ -1,72 +1,87 @@
-import "./env.js";
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+const WebSocket = require('ws');
 
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+// Define the allowed origins for CORS (Cross-Origin Resource Sharing)
+// This ensures that only your frontend can connect to this server.
+const ALLOWED_ORIGINS = [
+  'https://crews-live.vercel.app', // Your Vercel deployment
+  'http://localhost:3000',        // For local development
+];
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+// Use the PORT environment variable provided by the hosting service (like Render),
+// or default to 8080 for local development. This is crucial for deployment.
+const PORT = process.env.PORT || 8080;
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
+// Create a new WebSocket server.
+// The `verifyClient` function acts as a security check for incoming connections.
+const wss = new WebSocket.Server({
+  port: PORT,
+  verifyClient: (info, done) => {
+    const origin = info.origin;
+    // Check if the connection request is from an allowed domain.
+    if (ALLOWED_ORIGINS.includes(origin)) {
+      console.log(`Connection from origin ${origin} allowed.`);
+      done(true); // Allow the connection
+    } else {
+      console.log(`Connection from origin ${origin} rejected.`);
+      done(false, 403, 'Forbidden: Origin not allowed'); // Block the connection
+    }
+  }
+});
 
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+// This object will store all active client connections, mapping a unique ID to each.
+const clients = {};
+
+// This function generates a simple, unique ID for each new client.
+const getUniqueID = () => {
+  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+  return s4() + s4() + '-' + s4();
+};
+
+// Event listener for when a new client establishes a connection.
+wss.on('connection', (ws) => {
+  // 1. Assign a unique ID to the new client.
+  const id = getUniqueID();
+  clients[id] = ws;
+  console.log(`New client connected with ID: ${id}`);
+
+  // 2. Send the client its unique ID so it knows who it is.
+  ws.send(JSON.stringify({ type: 'ID', id: id }));
+
+  // 3. Set up a listener for messages from this specific client.
+  ws.on('message', (rawMessage) => {
+    console.log(`Received message from ${id}: ${rawMessage}`);
+    try {
+      const message = JSON.parse(rawMessage);
+      const targetId = message.targetId;
+      const targetClient = clients[targetId];
+
+      // Check if the intended recipient is connected and ready to receive messages.
+      if (targetClient && targetClient.readyState === WebSocket.OPEN) {
+        // Forward the message, adding the sender's ID for context.
+        targetClient.send(JSON.stringify({ ...message, senderId: id }));
+        console.log(`Forwarded message from ${id} to ${targetId}`);
+      } else {
+        console.log(`Client with ID ${targetId} not found or not open.`);
+        // Notify the sender that the recipient is not available.
+        ws.send(JSON.stringify({ type: 'ERROR', message: `User ${targetId} is not connected.` }));
       }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+    } catch (error) {
+      console.error('Failed to parse or handle message:', error);
     }
   });
 
-  next();
+  // 4. Set up a listener for when this client disconnects.
+  ws.on('close', () => {
+    console.log(`Client with ID: ${id} has disconnected.`);
+    // Clean up by removing the client from the active list.
+    delete clients[id];
+  });
+
+  // 5. Set up a listener for any connection errors.
+  ws.on('error', (error) => {
+    console.error(`An error occurred for client ${id}:`, error);
+  });
 });
 
-(async () => {
-  const server = await registerRoutes(app);
+console.log(`WebSocket server is running on port ${PORT}`);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    res.status(status).json({ message });
-    throw err;
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
-})();
